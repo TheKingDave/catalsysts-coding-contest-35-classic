@@ -32,7 +32,7 @@ class InitCommand extends Command {
       await Directory('!output/level$i').create();
     }
     
-    File('.levels').writeAsString('$levels}');
+    File('.levels').writeAsString('$levels');
 
     print(ch.green('Finished initializing'));
   }
