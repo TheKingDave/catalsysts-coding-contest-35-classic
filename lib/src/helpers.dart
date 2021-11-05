@@ -52,6 +52,14 @@ class StrRead with IterableMixin<String> implements Iterator<String> {
     return ret;
   }
   
+  List<List<String>> readRawList(int length) {
+    final ret = <List<String>>[];
+    for(int i = 0; i < length; i++) {
+      ret.add(getNextLine().split(' '));
+    }
+    return ret;
+  }
+  
   List<Map<String, String>> readList(int length, List<String> names) {
     final ret = <Map<String, String>>[];
     if(Set.from(names).length != names.length) {
