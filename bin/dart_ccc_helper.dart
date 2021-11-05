@@ -368,7 +368,6 @@ class Func {
       
       if(s.type == WordType.tCall) {
         final callStack = [];
-        if()
       }
       final res = s.execute(context);
       if (res.error) {
