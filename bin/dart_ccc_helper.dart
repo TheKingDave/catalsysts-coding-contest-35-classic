@@ -27,7 +27,7 @@ class Handle {
     final funcs = <Func>[];
     bool openFunction = false;
 
-    final ifStack = <If>[];
+    final containsStack = <ContainsStatement>[];
 
     while (iter.moveNext()) {
       Token s = iter.current;
@@ -42,15 +42,12 @@ class Handle {
           break;
         case WordType.tEnd:
           {
-            if (ifStack.isEmpty) {
+            if (containsStack.isEmpty) {
               openFunction = false;
             } else {
-              if (!ifStack.last.handelingTrue) {
-                add = ifStack.removeLast();
-              } else {
-                ifStack.last.handelingTrue = false;
-                iter.moveNext();
-                assert(iter.current.content == 'else', 'If else not complete');
+              final pop = containsStack.last.end();
+              if(pop) {
+                add = containsStack.removeLast();
               }
             }
           }
@@ -61,10 +58,13 @@ class Handle {
           break;
         case WordType.tIf:
           iter.moveNext();
-          ifStack.add(If(iter.current));
+          containsStack.add(If(iter.current));
+          break;
+        case WordType.tPostpone:
+          containsStack.add(Postpone());
           break;
         case WordType.tElse:
-          throw Exception('Should never occour');
+          break;
         case WordType.tReturn:
           iter.moveNext();
           add = Statement(type, [iter.current]);
@@ -80,8 +80,8 @@ class Handle {
       }
 
       if (add != null) {
-        if (ifStack.isNotEmpty) {
-          ifStack.last.addStatement(add);
+        if (containsStack.isNotEmpty) {
+          containsStack.last.addStatement(add);
         } else {
           if (!openFunction) {
             throw Exception('No open function');
@@ -136,7 +136,16 @@ class Token {
   }
 }
 
-class If extends Statement {
+abstract class ContainsStatement extends Statement {
+  ContainsStatement(WordType type) : super(type);
+  
+  /// Returns if it should be removed from the stack
+  bool end();
+
+  void addStatement(Statement s);
+}
+
+class If extends ContainsStatement {
   final Token input;
   final List<Statement> onTrue = [];
   final List<Statement> onFalse = [];
@@ -144,20 +153,51 @@ class If extends Statement {
 
   If(this.input) : super(WordType.tIf);
 
+  @override
   void addStatement(Statement s) {
     (handelingTrue ? onTrue : onFalse).add(s);
+  }
+  
+  @override
+  bool end() {
+    if(handelingTrue) {
+      handelingTrue = false;
+      return false;
+    }
+    return true;
   }
 
   @override
   ExecuteResult execute(Context context) {
     final inp = context.resolveVariable(input);
     if (inp.type != TokenType.bool) return ExecuteResult('', error: true);
-    return Func(inp.content as bool ? onTrue : onFalse).execute(context);
+    return Func(inp.content as bool ? onTrue : onFalse).execute(context.newRunLater());
   }
 
   @override
   String toString() {
     return 'If{input: $input}';
+  }
+}
+
+class Postpone extends ContainsStatement {
+  final List<Statement> statements = [];
+  
+  Postpone(): super(WordType.tPostpone);
+  
+  void addStatement(Statement s) {
+    statements.add(s);
+  }
+  
+  @override
+  bool end() {
+    return true;
+  }
+  
+  @override
+  ExecuteResult execute(Context context) {
+    context.runLater.addAll(statements);
+    return ExecuteResult('');
   }
 }
 
@@ -170,6 +210,7 @@ enum WordType {
   tReturn,
   tVar,
   tSet,
+  tPostpone,
 }
 
 final wordMap = <String, WordType>{
@@ -181,6 +222,7 @@ final wordMap = <String, WordType>{
   'return': WordType.tReturn,
   'var': WordType.tVar,
   'set': WordType.tSet,
+  'postpone': WordType.tPostpone,
 };
 
 WordType getTypeFromString(String str) {
@@ -249,8 +291,19 @@ class Variable {
 }
 
 class Context {
-  final Map<String, Variable> variables = {};
+  final Map<String, Variable> variables;
+  final List<Statement> runLater;
+  
+  factory Context() {
+    return Context._({}, []);
+  }
 
+  Context._(this.variables, this.runLater);
+  
+  Context newRunLater() {
+    return Context._(variables, []);
+  }
+  
   Variable resolveVariable(Token inp) {
     if (isVariable(inp)) {
       return getVariable(inp);
@@ -306,6 +359,19 @@ class Func {
         return ExecuteResult(ret, returned: true, value: res.value);
       }
     }
+    
+    while(context.runLater.isNotEmpty) {
+      final res = context.runLater[0].execute(context);
+      context.runLater.removeAt(0);
+      if (res.error) {
+        return ExecuteResult('', error: true);
+      }
+      ret += res.print;
+      if (res.returned) {
+        return ExecuteResult(ret, returned: true, value: res.value);
+      }
+    }
+    
     return ExecuteResult(ret);
   }
 
