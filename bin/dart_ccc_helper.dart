@@ -46,7 +46,7 @@ class Handle {
               openFunction = false;
             } else {
               if (!ifStack.last.handelingTrue) {
-                funcs.last.addStatement(ifStack.removeLast());
+                add = ifStack.removeLast();
               } else {
                 ifStack.last.handelingTrue = false;
                 iter.moveNext();
@@ -56,20 +56,26 @@ class Handle {
           }
           break;
         case WordType.tPrint:
-          if (!openFunction) throw Exception('No open function! $s');
           iter.moveNext();
-          add = Statement(type, iter.current);
+          add = Statement(type, [iter.current]);
           break;
         case WordType.tIf:
           iter.moveNext();
-          ifStack.add(If(iter.current.content));
+          ifStack.add(If(iter.current));
           break;
         case WordType.tElse:
           throw Exception('Should never occour');
         case WordType.tReturn:
-          if (!openFunction) throw Exception('No open function! $s');
           iter.moveNext();
-          add = Statement(type, iter.current);
+          add = Statement(type, [iter.current]);
+          break;
+        case WordType.tVar:
+        case WordType.tSet:
+          iter.moveNext();
+          final name = iter.current;
+          iter.moveNext();
+          final content = iter.current;
+          add = Statement(type, [name, content]);
           break;
       }
 
@@ -84,8 +90,12 @@ class Handle {
         }
       }
     }
-
-    write.write(funcs.map((e) => e.execute().print).join('\n'));
+    
+    write.write(funcs.map((e) {
+      final res = e.execute();
+      if (res.error) return 'ERROR';
+      return res.print;
+    }).join('\n'));
 
     return write.string;
   }
@@ -119,10 +129,15 @@ class Token {
     }
     return Token(TokenType.string, str);
   }
+
+  @override
+  String toString() {
+    return 'Token{tokenType: $tokenType, content: $content}';
+  }
 }
 
 class If extends Statement {
-  final bool input;
+  final Token input;
   final List<Statement> onTrue = [];
   final List<Statement> onFalse = [];
   bool handelingTrue = true;
@@ -134,8 +149,15 @@ class If extends Statement {
   }
 
   @override
-  ExecuteResult execute() {
-    return Func(input ? onTrue : onFalse).execute();
+  ExecuteResult execute(Context context) {
+    final inp = context.resolveVariable(input);
+    if (inp.type != TokenType.bool) return ExecuteResult('', error: true);
+    return Func(inp.content as bool ? onTrue : onFalse).execute(context);
+  }
+
+  @override
+  String toString() {
+    return 'If{input: $input}';
   }
 }
 
@@ -146,6 +168,8 @@ enum WordType {
   tIf,
   tElse,
   tReturn,
+  tVar,
+  tSet,
 }
 
 final wordMap = <String, WordType>{
@@ -155,24 +179,52 @@ final wordMap = <String, WordType>{
   'if': WordType.tIf,
   'else': WordType.tElse,
   'return': WordType.tReturn,
+  'var': WordType.tVar,
+  'set': WordType.tSet,
 };
 
 WordType getTypeFromString(String str) {
-  return wordMap[str]!;
+  if (!wordMap.containsKey(str)) {
+    throw Exception('Could not find type $str');
+  }
+  return wordMap[str.toLowerCase()]!;
 }
 
 class Statement {
   final WordType type;
-  final Token? extra;
+  final List<Token> extras;
 
-  Statement(this.type, [this.extra]);
+  Statement(this.type, [this.extras = const []]);
 
-  ExecuteResult execute() {
+  ExecuteResult execute(Context context) {
     switch (type) {
       case WordType.tPrint:
-        return ExecuteResult(extra!.content as String);
+        return ExecuteResult(
+            '${context.resolveVariable(extras.first).content}');
       case WordType.tReturn:
-        return ExecuteResult('', true);
+        return ExecuteResult('', returned: true, value: extras);
+      case WordType.tVar:
+        if (context.variables.containsKey(extras.first.content)) {
+          return ExecuteResult('', error: true);
+        }
+        final set = context.variables.containsKey(extras[1].content)
+            ? context.variables[extras[1].content]!
+            : Variable(extras[1].tokenType, extras[1].content);
+
+        context.variables[extras.first.content] = set;
+        
+        return ExecuteResult('');
+      case WordType.tSet:
+        if (!context.variables.containsKey(extras.first.content)) {
+          return ExecuteResult('', error: true);
+        }
+        final set = context.variables.containsKey(extras[1].content)
+            ? context.variables[extras[1].content]!
+            : Variable(extras[1].tokenType, extras[1].content);
+        
+        context.variables[extras.first.content] = set;
+            
+        return ExecuteResult('');
       default:
         throw Exception('The statement type $type is not executable');
     }
@@ -180,7 +232,41 @@ class Statement {
 
   @override
   String toString() {
-    return 'Statement{type: $type, extra: $extra}';
+    return 'Statement{type: $type, extra: $extras}';
+  }
+}
+
+class Variable {
+  final TokenType type;
+  final dynamic content;
+
+  Variable(this.type, this.content);
+
+  @override
+  String toString() {
+    return 'Variable{type: $type, content: $content}';
+  }
+}
+
+class Context {
+  final Map<String, Variable> variables = {};
+
+  Variable resolveVariable(Token inp) {
+    if (isVariable(inp)) {
+      return getVariable(inp);
+    }
+    return Variable(inp.tokenType, inp.content);
+  }
+
+  bool isVariable(Token name) {
+    return variables.containsKey(name.content);
+  }
+
+  Variable getVariable(Token name) {
+    if (!isVariable(name)) {
+      throw Exception('Could not find variable $name');
+    }
+    return variables[name.content]!;
   }
 }
 
@@ -188,15 +274,17 @@ class ExecuteResult {
   String print;
   dynamic value;
   bool returned;
+  bool error;
 
-  ExecuteResult(this.print, [this.returned=false, this.value]);
+  ExecuteResult(this.print,
+      {this.returned = false, this.value, this.error = false});
 }
 
 class Func {
   List<Statement> statements = [];
 
   Func([List<Statement>? statements]) {
-    if(statements != null) {
+    if (statements != null) {
       this.statements.addAll(statements);
     }
   }
@@ -205,13 +293,17 @@ class Func {
     statements.add(s);
   }
 
-  ExecuteResult execute() {
+  ExecuteResult execute([Context? context]) {
+    context ??= Context();
     String ret = '';
     for (final s in statements) {
-      final res = s.execute();
+      final res = s.execute(context);
+      if (res.error) {
+        return ExecuteResult('', error: true);
+      }
       ret += res.print;
-      if(res.returned) {
-        return ExecuteResult(ret, true, res.value);
+      if (res.returned) {
+        return ExecuteResult(ret, returned: true, value: res.value);
       }
     }
     return ExecuteResult(ret);
