@@ -9,6 +9,7 @@ class Handle {
   final write = ccc.StrWriter();
   final List<Token> tokens;
   final Iterator<Token> iter;
+  final funcs = <Func>[];
 
   Handle._(this.read, this.tokens, this.iter);
 
@@ -24,7 +25,6 @@ class Handle {
   }
 
   String run() {
-    final funcs = <Func>[];
     bool openFunction = false;
 
     final containsStack = <ContainsStatement>[];
@@ -77,6 +77,9 @@ class Handle {
           final content = iter.current;
           add = Statement(type, [name, content]);
           break;
+        case WordType.tCall:
+          add = Statement(type);
+          break;
       }
 
       if (add != null) {
@@ -92,12 +95,16 @@ class Handle {
     }
     
     write.write(funcs.map((e) {
-      final res = e.execute();
+      final res = e.execute(Context(this));
       if (res.error) return 'ERROR';
       return res.print;
     }).join('\n'));
 
     return write.string;
+  }
+  
+  Func getFunc(int index) {
+    return funcs[index];
   }
 }
 
@@ -185,6 +192,7 @@ class Postpone extends ContainsStatement {
   
   Postpone(): super(WordType.tPostpone);
   
+  @override
   void addStatement(Statement s) {
     statements.add(s);
   }
@@ -211,6 +219,7 @@ enum WordType {
   tVar,
   tSet,
   tPostpone,
+  tCall,
 }
 
 final wordMap = <String, WordType>{
@@ -223,6 +232,7 @@ final wordMap = <String, WordType>{
   'var': WordType.tVar,
   'set': WordType.tSet,
   'postpone': WordType.tPostpone,
+  'call': WordType.tCall,
 };
 
 WordType getTypeFromString(String str) {
@@ -244,6 +254,7 @@ class Statement {
         return ExecuteResult(
             '${context.resolveVariable(extras.first).content}');
       case WordType.tReturn:
+        context.returnStack.add(context.getVariable(extras.first));
         return ExecuteResult('', returned: true, value: extras);
       case WordType.tVar:
         if (context.variables.containsKey(extras.first.content)) {
@@ -291,17 +302,19 @@ class Variable {
 }
 
 class Context {
+  final Handle handle;
   final Map<String, Variable> variables;
+  final List<Variable> returnStack;
   final List<Statement> runLater;
   
-  factory Context() {
-    return Context._({}, []);
+  factory Context(Handle handle) {
+    return Context._(handle, {}, [], []);
   }
 
-  Context._(this.variables, this.runLater);
+  Context._(this.handle, this.variables, this.returnStack, this.runLater);
   
   Context newRunLater() {
-    return Context._(variables, []);
+    return Context._(handle, variables, returnStack, []);
   }
   
   Variable resolveVariable(Token inp) {
@@ -346,10 +359,17 @@ class Func {
     statements.add(s);
   }
 
-  ExecuteResult execute([Context? context]) {
-    context ??= Context();
+  ExecuteResult execute(Context context) {
     String ret = '';
-    for (final s in statements) {
+    
+    int i = 0;
+    while(i < statements.length) {
+      final s = statements[i];
+      
+      if(s.type == WordType.tCall) {
+        final callStack = [];
+        if()
+      }
       final res = s.execute(context);
       if (res.error) {
         return ExecuteResult('', error: true);
@@ -358,7 +378,9 @@ class Func {
       if (res.returned) {
         return ExecuteResult(ret, returned: true, value: res.value);
       }
+      i++;
     }
+    
     
     while(context.runLater.isNotEmpty) {
       final res = context.runLater[0].execute(context);
